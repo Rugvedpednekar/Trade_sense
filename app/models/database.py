@@ -1,7 +1,7 @@
 """
 database.py
 -----------
-SQLAlchemy ORM models and session management for SQLite.
+SQLAlchemy ORM models and session management for SQLite/PostgreSQL.
 Tables: news_articles, llm_analysis, technical_indicators, trade_signals, backtest_results
 """
 
@@ -15,11 +15,19 @@ from app.config import settings
 
 # ── Engine & Session ──────────────────────────────────────────────────────────
 
-engine = create_engine(
-    settings.DATABASE_URL,
-    connect_args={"check_same_thread": False},  # needed for SQLite + FastAPI threads
-    echo=settings.DEBUG,
-)
+DATABASE_URL = settings.DATABASE_URL
+
+if DATABASE_URL.startswith("sqlite"):
+    engine = create_engine(
+        DATABASE_URL,
+        connect_args={"check_same_thread": False},  # only for SQLite
+        echo=settings.DEBUG,
+    )
+else:
+    engine = create_engine(
+        DATABASE_URL,
+        echo=settings.DEBUG,
+    )
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
