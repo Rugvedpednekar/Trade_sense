@@ -33,45 +33,59 @@ def fetch_price_data(ticker: str, period: str | None = None, interval: str | Non
 
     logger.info(f"Fetching market data: ticker={ticker} period={period} interval={interval}")
 
-    try:
-        raw: pd.DataFrame = yf.download(
-            tickers=ticker,
-            period=period,
-            interval=interval,
-            auto_adjust=False,
-            progress=False,
-            threads=False,
-            group_by="column",
-        )
-    except Exception as exc:
-        logger.exception(f"yfinance download failed for {ticker}: {exc}")
-        raise RuntimeError(f"Failed to download data for {ticker}: {exc}") from exc
+    last_error = None
 
-    if raw is None or raw.empty:
-        logger.warning(f"No market data returned for ticker={ticker}")
-        raise ValueError(f"No market data returned for ticker '{ticker}'. Check the symbol.")
+    attempts = [
+        {"auto_adjust": False, "threads": False, "group_by": "column"},
+        {"auto_adjust": True, "threads": False, "group_by": "column"},
+    ]
 
-    # Flatten multi-level columns if needed
-    if isinstance(raw.columns, pd.MultiIndex):
-        raw.columns = raw.columns.get_level_values(0)
+    for attempt in attempts:
+        try:
+            raw: pd.DataFrame = yf.download(
+                tickers=ticker,
+                period=period,
+                interval=interval,
+                progress=False,
+                **attempt,
+            )
 
-    cols_needed = ["Open", "High", "Low", "Close", "Volume"]
-    missing_cols = [col for col in cols_needed if col not in raw.columns]
-    if missing_cols:
-        logger.error(f"Missing expected columns for {ticker}: {missing_cols}. Columns received: {list(raw.columns)}")
-        raise RuntimeError(f"Incomplete market data returned for {ticker}. Missing columns: {missing_cols}")
+            if raw is None or raw.empty:
+                logger.warning(f"Empty data returned for {ticker} with attempt={attempt}")
+                continue
 
-    raw = raw[cols_needed].copy()
-    raw.dropna(subset=["Close"], inplace=True)
+            if isinstance(raw.columns, pd.MultiIndex):
+                raw.columns = raw.columns.get_level_values(0)
 
-    if raw.empty:
-        logger.warning(f"All rows dropped after cleaning for ticker={ticker}")
-        raise ValueError(f"No usable market data returned for ticker '{ticker}'.")
+            cols_needed = ["Open", "High", "Low", "Close", "Volume"]
+            missing_cols = [col for col in cols_needed if col not in raw.columns]
+            if missing_cols:
+                logger.warning(
+                    f"Missing expected columns for {ticker}: {missing_cols}. "
+                    f"Columns received: {list(raw.columns)}"
+                )
+                continue
 
-    raw.index.name = "Date"
+            raw = raw[cols_needed].copy()
+            raw.dropna(subset=["Close"], inplace=True)
 
-    logger.info(f"Market data fetched successfully: {len(raw)} bars for {ticker}")
-    return raw
+            if raw.empty:
+                logger.warning(f"All rows dropped after cleaning for ticker={ticker}")
+                continue
+
+            raw.index.name = "Date"
+
+            logger.info(f"Market data fetched successfully: {len(raw)} bars for {ticker}")
+            return raw
+
+        except Exception as exc:
+            last_error = exc
+            logger.warning(f"Attempt failed for {ticker} with attempt={attempt}: {exc}")
+
+    if last_error is not None:
+        raise RuntimeError(f"Market data provider failed for {ticker}: {last_error}")
+
+    raise ValueError(f"No market data returned for ticker '{ticker}'. Check the symbol.")
 
 
 def build_market_response(ticker: str, df: pd.DataFrame, period: str) -> MarketDataResponse:
