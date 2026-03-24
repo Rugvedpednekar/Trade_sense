@@ -14,7 +14,7 @@ User → Streamlit Dashboard → FastAPI Backend
                     ┌─────────────┼──────────────────┐
                     │             │                  │
                Market Data    News Fetcher       LLM Analyzer
-             (yfinance)     (NewsAPI/yfinance)   (OpenAI)
+             (yfinance)     (NewsAPI/yfinance)   (Amazon Nova)
                     │             │                  │
                Indicators    Signal Engine      Risk Manager
              (pandas-ta)   (weighted scoring)  (ATR-based)
