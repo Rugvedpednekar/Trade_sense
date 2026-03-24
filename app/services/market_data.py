@@ -27,6 +27,7 @@ def fetch_price_data(ticker: str, period: str | None = None, interval: str | Non
         DataFrame with columns [Open, High, Low, Close, Volume] indexed by Date.
         Raises ValueError if no data is returned.
     """
+    ticker = ticker.upper().strip()
     period = period or settings.MARKET_DATA_PERIOD
     interval = interval or settings.MARKET_DATA_INTERVAL
 
@@ -34,48 +35,48 @@ def fetch_price_data(ticker: str, period: str | None = None, interval: str | Non
 
     try:
         raw: pd.DataFrame = yf.download(
-            ticker,
+            tickers=ticker,
             period=period,
             interval=interval,
-            auto_adjust=True,   # adjusts for splits & dividends
+            auto_adjust=False,
             progress=False,
+            threads=False,
+            group_by="column",
         )
     except Exception as exc:
-        logger.error(f"yfinance download failed for {ticker}: {exc}")
+        logger.exception(f"yfinance download failed for {ticker}: {exc}")
         raise RuntimeError(f"Failed to download data for {ticker}: {exc}") from exc
 
-    if raw.empty:
+    if raw is None or raw.empty:
+        logger.warning(f"No market data returned for ticker={ticker}")
         raise ValueError(f"No market data returned for ticker '{ticker}'. Check the symbol.")
 
-    # Flatten multi-level columns that yfinance sometimes returns
+    # Flatten multi-level columns if needed
     if isinstance(raw.columns, pd.MultiIndex):
         raw.columns = raw.columns.get_level_values(0)
 
-    # Keep only the columns we care about
     cols_needed = ["Open", "High", "Low", "Close", "Volume"]
-    raw = raw[cols_needed].copy()
+    missing_cols = [col for col in cols_needed if col not in raw.columns]
+    if missing_cols:
+        logger.error(f"Missing expected columns for {ticker}: {missing_cols}. Columns received: {list(raw.columns)}")
+        raise RuntimeError(f"Incomplete market data returned for {ticker}. Missing columns: {missing_cols}")
 
-    # Drop rows where Close is NaN (e.g. weekends in intraday data edge cases)
+    raw = raw[cols_needed].copy()
     raw.dropna(subset=["Close"], inplace=True)
 
-    # Ensure index is named Date
+    if raw.empty:
+        logger.warning(f"All rows dropped after cleaning for ticker={ticker}")
+        raise ValueError(f"No usable market data returned for ticker '{ticker}'.")
+
     raw.index.name = "Date"
 
-    logger.info(f"Market data fetched: {len(raw)} bars for {ticker}")
+    logger.info(f"Market data fetched successfully: {len(raw)} bars for {ticker}")
     return raw
 
 
 def build_market_response(ticker: str, df: pd.DataFrame, period: str) -> MarketDataResponse:
     """
     Convert a price DataFrame into a structured API response.
-
-    Args:
-        ticker: Stock symbol
-        df:     Clean OHLCV DataFrame from fetch_price_data
-        period: Period string used for the fetch
-
-    Returns:
-        MarketDataResponse Pydantic model
     """
     bars: list[OHLCVBar] = []
     for date_idx, row in df.iterrows():
@@ -105,13 +106,6 @@ def build_market_response(ticker: str, df: pd.DataFrame, period: str) -> MarketD
 def get_market_data(ticker: str, period: str | None = None) -> MarketDataResponse:
     """
     High-level entry point: fetch + format market data.
-
-    Args:
-        ticker: Stock symbol
-        period: Optional override for the fetch period
-
-    Returns:
-        MarketDataResponse
     """
     period = period or settings.MARKET_DATA_PERIOD
     df = fetch_price_data(ticker, period=period)
